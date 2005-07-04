@@ -1,0 +1,14 @@
+# http://module-build.sourceforge.net/META-spec.html
+#XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
+name:         Business-OnlinePayment-Protx
+version:      0.03
+version_from: lib/Business/OnlinePayment/Protx.pm
+installdirs:  site
+requires:
+    Class::Accessor:               0.19
+    Class::Data::Inheritable:      0.02
+    Class::Fields:                 0.2
+    Crypt::SSLeay:                 0.51
+
+distribution_type: module
+generated_by: ExtUtils::MakeMaker version 6.17
