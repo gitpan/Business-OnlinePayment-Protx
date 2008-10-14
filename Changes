@@ -1,11 +1,14 @@
 Revision history for Perl extension Business::Protx.
 
 0.01  Tue Apr 26 09:50:20 2005
-	- original version; created by h2xs 1.23 with options
-		-X Business::Protx
+      - original version; created by h2xs 1.23 with options
+      -X Business::Protx
 
 0.02  Wed Jun 08 2005
-	- Added Deferred and Preauth transactions
+      - Added Deferred and Preauth transactions
 
 0.03  Wed Jul 22 2005
-	- fixed bug parsing responses
+      - fixed bug parsing responses
+
+0.04  Tue Oct 14 2008
+      - rewrite

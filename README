@@ -1,4 +1,4 @@
-Business-OnlinePayment-Protx 
+Business-OnlinePayment-Protx
 ============================
 
 This perl module provides integration with the Protx VSP payments system
@@ -12,23 +12,15 @@ To install this module type the following:
    make test
    make install
 
-DEPENDENCIES
+SUPPORT AND DOCUMENTATION
 
-This module requires these other modules and libraries:
+After installing, you can find documentation for this module with the
+perldoc command.
 
-  Class::Accessor
-  Class::Fields
-  Class::Data::Inheritable
-  Crypt::SSLeay
+    perldoc Business::OnlinePayment::Protx
 
 COPYRIGHT AND LICENCE
 
-Put the correct copyright and licence information here.
+Copyright (C) 2008 by Airspace Software Ltd: www.airspace.co.uk
 
-Copyright (C) 2005 by Forsite Business Solutions www.fsite.com
-
-This library is free software; you can redistribute it and/or modify
-it under the same terms as Perl itself, either Perl version 5.8.5 or,
-at your option, any later version of Perl 5 you may have available.
-
-
+This library is free software under the same license as perl itself.

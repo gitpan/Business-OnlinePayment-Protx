@@ -1,484 +1,386 @@
 package Business::OnlinePayment::Protx;
 
-=head1 NAME
-
-Business::OnlinePayment::Protx - Perl Class for making Online Payments via Protx VPS
-
-=head1 SYNOPSIS
-
-  use Business::OnlinePayment::Protx;
-
-  Business::OnlinePayment::Protx->Vendor($your_vps_gateway_username);
-
-  my $request = Business::OnlinePayment::Protx->new();
-
-  my $payment_status = $request->make_direct_payment(
-						   VendorTxCode => 1131,
-						   Amount => 23.5,
-						   Description => 'a test purchase' ,
-						   CardHolder => 'mr fred elliot',
-						   CardNumber => '4444333322221111',
-						   ExpiryMonth => "07",
-						   ExpiryYear => "05",
-						   IssueNumber => 3,
-						   CV2 => 555,
-						   CardType => 'MC',);
-
-  my $payment_status = $request->Status;
-
-  my $repeat_request = $request->new();
-
-  my $repeat_status = $repeat_request->make_repeat_payment(
-							 VendorTxCode => '2011',
-							 Description => 'a repeat payment',
-							 RelatedVPSTxId => $vpstxid,
-							 RelatedVendorTxCode => '1011',
-							 RelatedSecurityKey => $seckey,
-							 RelatedTxAuthNo => $authno,
-							 Amount => 250,
-							);
-
-  my $repeat_VPSRef = $repeat_request->VPSTxId;
-  my $repeat_VendorRef = $repeat_request->VendorTxCode;
-
-
-
-  my $status = $request->make_preauth_payment( VendorTxCode => '1231', Amount => ... );
-  my $preauth_VPSRef = $repeat_request->VPSTxId;
-  my $preauth_VendorRef = $repeat_request->VendorTxCode;
-
-
-=head1 DESCRIPTION
-
-Business::OnlinePayment::Protx is a module that allows you to easily make
-payments via the Protx VPS DirectPay system.
-
-This module provides a Flexible powerful class with attributes matching the
-fields used in VPS request and response messages. It uses LWP to send HTTPS
-POST requests to the gateway and processes the response.
-
-=cut
-
-use 5.006;
 use strict;
-use Data::Dumper;
-our $VERSION = '0.03';
+use warnings;
+use Carp;
+use Net::SSLeay qw(make_form post_https);
+use base qw(Business::OnlinePayment);
 
-use LWP::UserAgent;
+our $VERSION = '0.04';
 
-use base qw(Class::Accessor Class::Fields Class::Data::Inheritable);
+# CARD TYPE MAP
 
-use public qw(VendorTxCode Amount Description CardHolder CardNumber
-              StartDate ExpiryDate IssueNumber CV2 CardType
-              Status SecurityKey TxAuthNo VPSTxId
-              RelatedVPSTxId RelatedVendorTxCode RelatedSecurityKey RelatedTxAuthNo);
+my %card_type = (
+	'american express' => 'AMEX',
+	'amex' => 'AMEX',
+	'visa' => 'VISA',
+	'visa electron' => 'UKE',
+	'visa debit' => 'VISA',
+	'mastercard' => 'MC',
+	'maestro' => 'MAESTRO',
+	'switch' => 'MAESTRO',
+	'switch solo' => 'SOLO',
+	'solo' => 'SOLO',
+	'diners club' => 'DINERS',
+	'jcb' => 'JCB',
+);
 
-use private qw( _lwp);
+#ACTION MAP
+my %action = (
+    'normal authorization'    => 'PAYMENT',       # Take Payment now
+    'authorization only'      => 'AUTHENTICATE',  # Store details at protx with 3D+address check
+    'post authorization'      => 'AUTHORISE',	    # Post-Auth
+    'refund'                  => 'REFUND',
+);
 
 my %servers = (
-	       live => {
-			payment => 'https://ukvps.protx.com/vpsDirectAuth/PaymentGateway.asp',
-			service => 'https://ukvps.protx.com/vps200/dotransaction.dll?Service=',
-		       },
-	       test => {
-			payment => 'https://ukvpstest.protx.com/vpsDirectAuth/PaymentGateway.asp',
-			service => 'https://ukvpstest.protx.com/vps200/dotransaction.dll?Service=',
-		       },
-	       simulator => {
-			     payment => 'https://ukvpstest.protx.com/VSPSimulator/VSPDirectGateway.asp',
-			     service => 'https://ukvpstest.protx.com/VSPSimulator/VSPServerGateway.asp?Service=',
-			    },
-	      );
+	live => {
+		url => 'ukvps.protx.com',
+		path => '/vspgateway/service/vspdirect-register.vsp',
+		callback => '/vspgateway/service/direct3dcallback.vsp',
+		authorise => '/vspgateway/service/authorise.vsp',
+		refund => '/vspgateway/service/refund.vsp',
+		port => 443,
+	},
+	test => {
+		url  => 'ukvpstest.protx.com',
+		path => '/vspgateway/service/vspdirect-register.vsp',
+		callback => '/vspgateway/service/direct3dcallback.vsp',
+		authorise => '/vspgateway/service/authorise.vsp',
+		refund => '/vspgateway/service/refund.vsp',
+		port => 443,
+	},
+	simulator => {
+		url => 'ukvpstest.protx.com',
+		path => '/VSPSimulator/VSPDirectGateway.asp',
+		callback => '/VSPSimulator/VSPDirectCallback.asp',
+		authorise => '/VSPSimulator/VSPServerGateway.asp?service=VendorAuthoriseTx ',
+		refund => '/VSPSimulator/VSPServerGateway.asp?service=VendorRefundTx ',
+		port => 443,
+	},
+);
 
-__PACKAGE__->mk_ro_accessors( qw{Status SecurityKey TxAuthNo VPSTxId});
-__PACKAGE__->mk_accessors( qw{VendorTxCode Amount Description CardHolder CardNumber
-                              StartMonth StartYear ExpiryMonth ExpiryYear IssueNumber CV2 CardType
-                              Status SecurityKey TxAuthNo VPSTxId
-                              RelatedVPSTxId RelatedVendorTxCode RelatedSecurityKey RelatedTxAuthNo} );
-
-
-__PACKAGE__->mk_classdata('VPSProtocol');
-__PACKAGE__->VPSProtocol('2.22');
-__PACKAGE__->mk_classdata('Vendor');
-__PACKAGE__->mk_classdata('Currency');
-__PACKAGE__->Currency('GBP');
-__PACKAGE__->mk_classdata('mode');
-__PACKAGE__->mode('simulator');
-
-########################################
-
-=head1 CLASS METHODS
-
-=head2 Vendor
-
-This class method specifies the vendor username to be used in payment requests.
-
-  Business::OnlinePayment::Protx->Vendor($your_vps_gateway_username);
-
-This needs to be set before creating or using any objects.
-
-=head2 VPSProtcol
-
-This class method specifies the VPS protocol to be used in payment requests.
-
-  Business::OnlinePayment::Protx->VPSProtocol('2.22');
-
-The default is 2.2, if you need to change the value, do so before calling an object method that uses it
-such as make_direct_payment
-
-=head2 mode
-
-This class method specifies the mode to be used for payment requests.
-
-  Business::OnlinePayment::Protx->mode('live');
-
-The default mode value is 'simulator', other modes are 'test' and 'live'.
-
-=head1 CONSTRUCTOR METHODS
-
-=head2 new
-
-This creates and populates the Business::OnlinePayment::Protx with parameters provided.
-
-my $request = Business::OnlinePayment::Protx->new();
-
-Parameters you can provide are Vendor
-
-=cut
-
-sub new {
-  my $class = shift;
-  my %params = @_;
-  my $object = {
-		VPSProtocol => $class->VPSProtocol,
-		Currency => $class->Currency,
-		Vendor => $class->Vendor || $params{Vendor},
-		_lwp => LWP::UserAgent->new(timeout=>4),
-	       };
-
-  die "Vendor username needs to be set, please read the documentation\n" unless (__PACKAGE__->Vendor || $params{Vendor});
-  my $self = bless ($object, ref $class || $class);
-  return $self;
+sub callback {
+	my ($self, $value) = @_;
+	$self->{'callback'} = $value if $value;
+	return $self->{'callback'};
 }
 
-########################################
-
-=head1 OBJECT METHODS AND ACCESSORS
-
-=head2 make_direct_payment
-
-This method sends a payment request to the VPS Payment Gateway and checks the result.
-
-This method takes the following named arguments : VendorTxCode, Amount, Description, CardHolder, CardNumber,
-StartMonth, StartYear, ExpiryMonth, ExpiryYear, IssueNumber, CV2, CardType
-and returns true (the Status provided by the gateway) on success
-and dies on failure.
-
-This method is called on the object and will update the object based on the results,
-these results can then be accessed via the normal accessors as show below
-
-my $status = $request->make_direct_payment( VendorTxCode => '1231', Amount => ... );
-
-my $VPS_tx_id = $request->VPSTxId;
-
-=cut
-
-sub make_direct_payment {
-  my ($self, %params) = @_;
-  foreach my $field (qw(VendorTxCode Description CardHolder CardNumber IssueNumber CV2 CardType Amount StartMonth StartYear ExpiryMonth ExpiryYear)) {
-    $self->$field($params{$field});
-  }
-  my $status = $self->_process_transaction( TxType => 'PAYMENT' );
-  return $status;
+sub set_server {
+    my ($self, $type) = @_;
+    $self->{'_server'} = $type;
+    $self->server($servers{$type}->{'url'});
+    $self->path($servers{$type}->{'path'});
+    $self->callback($servers{$type}->{'callback'});
+    $self->port($servers{$type}->{'port'});
 }
 
+sub set_defaults {
+    my $self = shift;
+	$self->set_server('live');
 
-=head2 make_repeat_payment
-
-This method sends a repeat payment request to the VPS Payment Gateway and checks the result.
-
-This method takes the following arguments : VendorTxCode, Description, Amount,
-RelatedVPSTxId, RelatedVendorTxCode, RelatedSecurityKey, RelatedTxAuthNo
-and returns true (the Status provided by the gateway) on success
-and dies on failure.
-
-This method is called on the object and will update the object based on the results,
-these results can then be accessed via the normal accessors as show below
-
-my $status = $request->make_repeat_payment(VendorTxCode=>...);
-
-my $VPS_tx_id = $request->VPSTxId;
-
-=cut
-
-sub make_repeat_payment {
-  my ($self, %param) = @_;
-  foreach my $field (qw(VendorTxCode Description Amount )) {
-    $self->$field($param{$field});
-  }
-
-  my $status = $self->_process_transaction( TxType => 'REPEAT',
-					    RelatedVPSTxId => $param{RelatedVPSTxId},
-					    RelatedVendorTxCode => $param{RelatedVendorTxCode},
-					    RelatedSecurityKey => $param{RelatedSecurityKey},
-					    RelatedTxAuthNo => $param{RelatedTxAuthNo},);
-  return $status;
+    $self->build_subs(qw/protocol currency cvv2_response postcode_response
+       require_3d forward_to invoice_number authentication_key pareq cross_reference callback/);
+	$self->protocol('2.22');
+	$self->currency('GBP');
+	$self->require_3d(0);
 }
 
-=head2 make_preauth_payment
-
-This method sends a preauthorise payment request to the VPS Payment Gateway and checks the result.
-
-This method takes the following named arguments : VendorTxCode, Amount, Description, CardHolder, CardNumber,
-StartMonth, StartYear, ExpiryMonth, ExpiryYear, IssueNumber, CV2, CardType
-and returns true (the Status provided by the gateway) on success
-and dies on failure.
-
-This method is called on the object and will update the object based on the results,
-these results can then be accessed via the normal accessors as show below
-
-my $status = $request->make_preauth_payment( VendorTxCode => '1231', Amount => ... );
-
-my $VPS_tx_id = $request->VPSTxId;
-
-=cut
-
-sub make_preauth_payment {
-  my ($self, %params) = @_;
-  foreach my $field (qw(VendorTxCode Description CardHolder CardNumber IssueNumber CV2 CardType Amount StartMonth StartYear ExpiryMonth ExpiryYear)) {
-    $self->$field($params{$field});
-  }
-  my $status = $self->_process_transaction( TxType => 'PREAUTH' );
-  return $status;
+sub do_remap {
+	my ($self, $content, %map) = @_;
+	my %remapped = ();
+	while (my ($k, $v) = each %map) {
+		no strict 'refs';
+		$remapped{$k} = ref( $map{$k} ) ? 
+			${ $map{$k} }
+			:
+			$content->{$v};
+	}
+	return %remapped;
 }
 
-=head2 make_deferred_payment
-
-This method sends a deferred payment request to the VPS Payment Gateway and checks the result.
-
-=cut
-
-sub make_deferred_payment {
-  my ($self, %params) = @_;
-  foreach my $field (qw(VendorTxCode Description CardHolder CardNumber IssueNumber CV2 CardType Amount StartMonth StartYear ExpiryMonth ExpiryYear)) {
-    $self->$field($params{$field});
-  }
-  my $status = $self->_process_transaction( TxType => 'DEFERRED' );
-  return $status;
-}
-
-=head2 abort_deferred_payment
-
-This method sends a repeat payment request to the VPS Payment Gateway and checks the result.
-
-=cut
-
-sub abort_deferred_payment {
-
-
-}
-
-=head2 release_deferred_payment
-
-This method sends a repeat payment request to the VPS Payment Gateway and checks the result.
-
-=cut
-
-sub release_deferred_payment {
-
-
-}
-
-##################################################################
-# Attributes and Accessors
-
-=head2 CardType
-
-Type of card used on order
-
-VISA, MC (mastercard), DELTA, SOLO, SWITCH, UKE (electron), AMEX, DC or JCB
-
-alphanumeric
-
-=head2 Amount
-
-Total Value of Order
-
-floating point to 2 decimal places.
-
-=cut
-
-sub get_Amount {
-  my $amount = shift->{Amount};
-  return sprintf("%.2f",$amount);
-}
-
-sub Amount {
-  my $self = shift;
+sub format_amount {
   my $amount = shift;
-  if ($amount) {
-    $self->{Amount} = $amount;
-  } else {
-    $amount = $self->{Amount};
-  }
   return sprintf("%.2f",$amount);
 }
 
-=head2 StartMonth
+sub submit_3d {
+	my $self = shift;
+        my %content = $self->content;
+        my %post_data = (
+          ( map { $_ => $content{$_} } qw(login password) ),
+          MD    => $content{'cross_reference'},
+          PaRes => $content{'pares'},
+        );
+	$self->set_server('test') if $self->test_transaction;
+	my ($page, $response, %headers) = 
+		post_https(
+				$self->server,
+				$self->port,
+				$self->callback,
+				undef,
+				make_form(%post_data)
+			);
+	unless ($page) {
+	  $self->error_message('There was a problem communicating with the payment server, please try later');
+		return;
+	}
 
-=head2 StartYear
-
-=head2 StartDate
-
-alias to get_StartDate
-
-=head2 get_StartDate
-
-=cut
-
-sub StartDate {
-  get_StartDate(shift);
+  my $rf = $self->_parse_response($page);
+	$self->server_response($rf);
+	$self->result_code($rf->{'Status'});
+	$self->authentication_key($rf->{'SecurityKey'});
+	$self->authorization($rf->{'VPSTxId'});
+	
+	unless(
+	  $self->is_success($rf->{'Status'} eq 'OK' ||
+  	$rf->{'Status'} eq 'AUTHENTICATED' ||
+    $rf->{'Status'} eq 'REGISTERED' 
+    ? 1 : 0)) {
+  		$self->error_message('Your card failed the password check.');
+	}
 }
 
-sub get_StartDate {
-  my $self = shift;
-  return 0 unless (defined $self->{StartMonth});
-  return sprintf("%02d%02d",$self->StartMonth,$self->StartYear);
+sub auth_action {
+	my $self = shift;
+	my $action = shift;
+	croak "Need vendor ID"
+		unless defined $self->vendor;
+	$self->set_server('test') if $self->test_transaction;
+	my %content = $self->content();
+	my %field_mapping = (
+		VpsProtocol => \($self->protocol),
+	  Vendor      => \($self->vendor),
+	  TxType      => \($action{lc $content{'action'}}),
+	  VendorTxCode=> 'invoice_number',
+	  Description => 'description',
+		Currency	=> \($self->currency),
+	  Amount      => \(format_amount($content{'amount'})),
+		RelatedVPSTxId => 'parent_auth',
+		RelatedVendorTxCode => 'parent_invoice_number',
+		RelatedSecurityKey => 'authentication_key',
+	);
+  my %post_data = $self->do_remap(\%content,%field_mapping);
+	$self->path($servers{$self->{'_server'}}->{lc $post_data{'TxType'}});
+	my ($page, $response, %headers) = 
+		post_https(
+				$self->server,
+				$self->port,
+				$self->path,
+				undef,
+				make_form(
+					%post_data
+				)
+			);
+	unless ($page) {
+	  $self->error_message('There was a problem communicating with the payment server, please try later');
+    $self->is_success(0);
+		return;
+	}
+
+  my $rf = $self->_parse_response($page);
+	$self->server_response($rf);
+	$self->result_code($rf->{'Status'});
+	$self->authorization($rf->{'VPSTxId'});
+	unless($self->is_success($rf->{'Status'} eq 'OK'? 1 : 0)) {
+		$self->error_message('There was a problem taking your payment');
+	}
+
 }
 
-=head2 ExpiryMonth
+sub submit {
+	my $self = shift;
+	croak "Need vendor ID"
+		unless defined $self->vendor;
+	$self->set_server('test') if $self->test_transaction;
+	my %content = $self->content();
+	$content{'expiration'} =~ s#/##g;
+	$content{'startdate'} =~ s#/##g if $content{'startdate'};
 
-=head2 ExpiryYear
+	my $card_name = $content{'name_on_card'}||$content{'first_name'} . ' ' . $content{'last_name'};
+	my $customer_name = $content{'customer_name'}
+	|| $content{'first_name'} ? $content{'first_name'} . ' ' . $content{'last_name'} : undef;
+	
+	my %field_mapping = (
+		VpsProtocol => \($self->protocol),
+	  Vendor      => \($self->vendor),
+	  TxType      => \($action{lc $content{'action'}}),
+	  VendorTxCode=> 'invoice_number',
+	  Description => 'description',
+		Currency	=> \($self->currency),
+    CardHolder  => \($card_name),
+	  CardNumber  => 'card_number',
+	  CV2         => 'cvv2',
+		ExpiryDate	=> 'expiration',
+		StartDate	=> 'startdate',
+	  Amount      => \(format_amount($content{'amount'})),
+		IssueNumber => 'issue_number',
+		CardType	=> \($card_type{lc $content{'type'}}),
+		ApplyAVSCV2 => 0,
 
-=head2 ExpiryDate
-
-alias to get_ExpiryDate
-
-=head2 get_ExpiryDate
-
-=cut
-
-sub ExpiryDate {
-  get_ExpiryDate(shift);
-}
-
-sub get_ExpiryDate {
-  my $self = shift;
-  return sprintf("%02d%02d",$self->ExpiryMonth, $self->ExpiryYear);
-}
-
-########################################
-# private / internal methods
-
-# _process_transaction( TxType => , ... );
-
-sub _process_transaction {
-  my ($self,%params) = @_;
-  my $class = ref $self;
-
-  # populate POST Form
-  my %form = map { $_ => $params{$_} } keys %params;
-  @form{qw(VPSProtocol Currency Vendor)} = ($class->VPSProtocol, $class->Currency, $class->Vendor);
-  foreach (qw(StartDate ExpiryDate VendorTxCode Description CardHolder CardNumber IssueNumber CV2 CardType Amount)) {
-    $form{$_} = $self->$_ if ($self->$_);
-  }
-  delete $form{StartDate} unless ($form{StartDate} > 1);
-
-#  warn "[WARN] : form values :\n";
-#  warn Dumper(%form);
-
-  # send POST Form and get response
-  my $url = ($params{TxType} =~ /(?:PAYMENT|DEFERRED|PREAUTH)/) ?
-    $servers{$class->mode}{'payment'} : $servers{$class->mode}{'service'} .'Vendor'. ucfirst(lc$params{TxType}) .'Tx' ;
-  warn "[WARN] : url is $url\n";
-  my $response = $self->{_lwp}->post( $url , \%form );
-
-  # process response and catch errors
-  my $return;
-  if ($response->is_success) {
-    my $response_fields = $self->_parse_response($response->content);
-    my ($status, $statusdetail,$vpstxid, $authno, $seckey)
-      = @$response_fields{qw(Status StatusDetail VPSTxId TxAuthNo SecurityKey )};
-    # check status field for OK, MALFORMED or INVALID
-    STATUS : {
-	$self->{Status} = $status;
-	if ( $status eq 'OK' ) {
-	    $self->{SecurityKey}= $seckey;
-	    $self->{TxAuthNo} = $authno;
-	    $self->{VPSTxId}= $vpstxid;
-	    last STATUS;
+		BillingAddress  => 'address',
+		BillingPostCode => 'zip',
+		CustomerName    => \($customer_name),
+		ContactNumber   => 'telephone',
+		ContactFax		=> 'fax',
+		CustomerEmail	=> 'email',
+	);
+	
+	my %post_data = $self->do_remap(\%content,%field_mapping);
+	
+	$self->path($servers{$self->{'_server'}}->{'authorise'}) if $post_data{'TxType'} eq 'AUTHORISE';
+	my ($page, $response, %headers) = 
+		post_https(
+				$self->server,
+				$self->port,
+				$self->path,
+				undef,
+				make_form(
+					%post_data
+				)
+			);
+	unless ($page) {
+	  $self->error_message('There was a problem communicating with the payment server, please try later');
+    $self->is_success(0);
+		return;
 	}
-	if ( $status eq 'ERROR') {
-	    warn "[WARNING] request received ERROR status : $statusdetail\n";
-	    $self->{StatusDetail} = $statusdetail;
-	    last STATUS;
+
+  my $rf = $self->_parse_response($page);
+	$self->server_response($rf);
+	$self->result_code($rf->{'Status'});
+	$self->authorization($rf->{'VPSTxId'});
+	$self->authentication_key($rf->{'SecurityKey'});
+	
+	if($self->result_code eq '3DAUTH' && $rf->{'3DSecureStatus'} eq 'OK') {
+		$self->require_3d(1);
+		$self->forward_to($rf->{'ACSURL'});
+		$self->pareq($rf->{'PAReq'});
+		$self->cross_reference($rf->{'MD'});
 	}
-	if ( $status eq 'NOTAUTHED') {
-	    warn "[WARNING] request received NOTAUTHED status : $statusdetail\n";
-	    $self->{StatusDetail} = $statusdetail;
-	    last STATUS;
+	$self->cvv2_response($rf->{'CV2Result'});
+	$self->postcode_response($rf->{'PostCodeResult'});
+	unless($self->is_success(
+	  $rf->{'Status'} eq '3DAUTH' ||
+	  $rf->{'Status'} eq 'OK' ||
+	  $rf->{'Status'} eq 'AUTHENTICATED' ||
+	  $rf->{'Status'} eq 'REGISTERED' 
+	  ? 1 : 0)) {
+      if($rf->{'StatusDetail'} =~ /5013/) {
+    		$self->error_message('Your card has expired');
+      } else {
+    		$self->error_message('There was a problem taking your payment');
+      }
 	}
-	if ( $status eq 'REJECTED') {
-	    warn "[WARNING] request received REJECTED status : $statusdetail\n";
-	    $self->{StatusDetail} = $statusdetail;
-	    last STATUS;
-	}
-	if ($status eq 'INVALID') {
-	    warn "[ERROR] request was invalid : $statusdetail";
-	    $self->{StatusDetail} = $statusdetail;
-	    last STATUS;
-	}
-	if ($status eq 'MALFORMED') {
-	    warn "[ERROR] request was malformed : $statusdetail";
-	    $self->{StatusDetail} = $statusdetail;
-	    last STATUS;
-	}
-	else {
-	    die "[ERROR] unrecognised status : $status : $statusdetail";
-	}
-      } # end of STATUS
-    $return = $status;
-  }
-  else {
-      $self->{Status} = 'SENDING_ERROR';
-      $self->{StatusDetail} = $response->status_line;
-      warn "[ERROR] unable to complete request/response with protx server : " . $response->status_line;
-      return $self->{Status};
-  }
 }
 
 sub _parse_response {
   my ($self,$response) = @_;
   my $crlfpattern = qq{[\015\012\n\r]};
-  my %values = map { split(/=/,$_) } grep(/=.+$/,split (/$crlfpattern/,$response));
+  my %values = map { split(/=/,$_, 2) } grep(/=.+$/,split (/$crlfpattern/,$response));
   return \%values;
 }
 
-################################################################################
+=head1 NAME
 
-1;
+Business::OnlinePayment::Protx - Protx backend for Business::OnlinePayment
 
-__END__
+=head1 SYNOPSIS
 
-=head2 EXPORT
+  use Business::OnlinePayment;
 
-None by default.
+  my $tx = Business::OnlinePayment->new(
+      "Protx",
+      "username"  => "abc",
+  );
+
+  $tx->content(
+      type           => 'VISA',
+      login          => 'testdrive',
+      password       => '',
+      action         => 'Normal Authorization',
+      description    => 'Business::OnlinePayment test',
+      amount         => '49.95',
+      invoice_number => '100100',
+      customer_id    => 'jsk',
+      first_name     => 'Jason',
+      last_name      => 'Kohles',
+      address        => '123 Anystreet',
+      city           => 'Anywhere',
+      state          => 'UT',
+      zip            => '84058',
+      card_number    => '4007000000027',
+      expiration     => '09/02',
+      cvv2           => '1234', #optional
+      referer        => 'http://valid.referer.url/',
+  );
+
+  $tx->set_server('simulator'); #live, simulator or test(default)
+
+  $tx->submit();
+
+   if ($tx->is_success) {
+       print "Card processed successfully: " . $tx->authorization . "\n";
+   } else {
+       print "Card was rejected: " . $tx->error_message . "\n";
+   }
+
+=cut
+
+=head1 DESCRIPTION
+
+This perl module provides integration with the Protx VSP payments system.
+
+=head1 BUGS
+
+Please report any bugs or feature requests to C<bug-business-onlinepayment-protx at rt.cpan.org>, or through
+the web interface at L<http://rt.cpan.org/NoAuth/ReportBug.html?Queue=Business-OnlinePayment-Protx>.  I will be notified, and then you'll automatically be notified of progress on your bug as I make changes.
+
+=head1 SUPPORT
+
+You can find documentation for this module with the perldoc command.
+
+    perldoc Business::OnlinePayment::Protx
+
+You can also look for information at:
+
+=over 4
+
+=item * RT: CPAN's request tracker
+
+L<http://rt.cpan.org/NoAuth/Bugs.html?Dist=Business-OnlinePayment-Protx>
+
+=item * AnnoCPAN: Annotated CPAN documentation
+
+L<http://annocpan.org/dist/Business-OnlinePayment-Protx>
+
+=item * CPAN Ratings
+
+L<http://cpanratings.perl.org/d/Business-OnlinePayment-Protx>
+
+=item * Search CPAN
+
+L<http://search.cpan.org/dist/Business-OnlinePayment-Protx>
+
+=back
 
 =head1 SEE ALSO
 
-www.protx.com
+L<Business::OnlinePayment>
 
 =head1 AUTHOR
 
-Foresite Developers, E<lt>dev@fsite.comE<gt>
+  purge: Simon Elliott <cpan@browsing.co.uk>
 
-=head1 COPYRIGHT AND LICENSE
+=head1 ACKNOWLEDGEMENTS
 
-Copyright (C) 2005 Foresite Business Solutions www.fsite.com
+  To Airspace Software Ltd <http://www.airspace.co.uk>, for the sponsorship.
 
-This library is free software; you can redistribute it and/or modify
-it under the same terms as Perl itself, either Perl version 5.8.5 or,
-at your option, any later version of Perl 5 you may have available.
+  To Wallace Reis, for comments and patches.
 
+=head1 LICENSE
+
+  This library is free software under the same license as perl itself.
 
 =cut
+
+1;

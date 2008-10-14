@@ -1,14 +1,22 @@
-# http://module-build.sourceforge.net/META-spec.html
-#XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
-name:         Business-OnlinePayment-Protx
-version:      0.03
-version_from: lib/Business/OnlinePayment/Protx.pm
-installdirs:  site
-requires:
-    Class::Accessor:               0.19
-    Class::Data::Inheritable:      0.02
-    Class::Fields:                 0.2
-    Crypt::SSLeay:                 0.51
-
+---
+abstract: 'Protx backend for Business::OnlinePayment'
+author:
+  - 'purge: Simon Elliott <cpan@browsing.co.uk>'
 distribution_type: module
-generated_by: ExtUtils::MakeMaker version 6.17
+generated_by: 'Module::Install version 0.77'
+license: perl
+meta-spec:
+  url: http://module-build.sourceforge.net/META-spec-v1.4.html
+  version: 1.4
+name: Business-OnlinePayment-Protx
+no_index:
+  directory:
+    - inc
+    - t
+requires:
+  Business::OnlinePayment: 2.01
+  Net::SSLeay: 1.35
+  Test::More: 0
+resources:
+  license: http://dev.perl.org/licenses/
+version: 0.04
