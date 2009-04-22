@@ -5,8 +5,9 @@ use warnings;
 use Carp;
 use Net::SSLeay qw(make_form post_https);
 use base qw(Business::OnlinePayment);
+use Data::Dumper;
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 # CARD TYPE MAP
 
@@ -25,6 +26,19 @@ my %card_type = (
 	'jcb' => 'JCB',
 );
 
+my $status = {
+  5013 => 'Your card has expired.',
+  3078 => 'Your e-mail was invalid.',
+  4023 => 'The card issue number is invalid.',
+  4024 => 'The card issue number is required.',
+  2000 => 'Your card was declined by the bank',
+  2001 => 'Your card was declined by the merchant',
+  5995 => 'Please ensure you have entered the correct digits off the back of your card and your billing address is correct',
+  5027 => 'Card start date is invalid',
+  5028 => 'Card expiry date is invalid',
+  3107 => 'Please ensure you have entered your full name, not just your surname',
+};
+
 #ACTION MAP
 my %action = (
     'normal authorization'    => 'PAYMENT',       # Take Payment now
@@ -40,22 +54,25 @@ my %servers = (
 		callback => '/vspgateway/service/direct3dcallback.vsp',
 		authorise => '/vspgateway/service/authorise.vsp',
 		refund => '/vspgateway/service/refund.vsp',
+		cancel => '/vspgateway/service/cancel.vsp',
 		port => 443,
 	},
 	test => {
-		url  => 'ukvpstest.protx.com',
-		path => '/vspgateway/service/vspdirect-register.vsp',
-		callback => '/vspgateway/service/direct3dcallback.vsp',
-		authorise => '/vspgateway/service/authorise.vsp',
-		refund => '/vspgateway/service/refund.vsp',
+		url  => 'test.sagepay.com',
+		path => '/gateway/service/vspdirect-register.vsp',
+		callback => '/gateway/service/direct3dcallback.vsp',
+		authorise => '/gateway/service/authorise.vsp',
+		refund => '/gateway/service/refund.vsp',
+		cancel => '/gateway/service/cancel.vsp',
 		port => 443,
 	},
 	simulator => {
-		url => 'ukvpstest.protx.com',
-		path => '/VSPSimulator/VSPDirectGateway.asp',
-		callback => '/VSPSimulator/VSPDirectCallback.asp',
-		authorise => '/VSPSimulator/VSPServerGateway.asp?service=VendorAuthoriseTx ',
-		refund => '/VSPSimulator/VSPServerGateway.asp?service=VendorRefundTx ',
+		url => 'test.sagepay.com',
+		path => '/Simulator/VSPDirectGateway.asp',
+		callback => '/Simulator/VSPDirectCallback.asp',
+		authorise => '/Simulator/VSPServerGateway.asp?service=VendorAuthoriseTx ',
+		refund => '/Simulator/VSPServerGateway.asp?service=VendorRefundTx ',
+		cancel => '/Simulator/VSPServerGateway.asp?service=VendorCancelTx',
 		port => 443,
 	},
 );
@@ -79,9 +96,9 @@ sub set_defaults {
     my $self = shift;
 	$self->set_server('live');
 
-    $self->build_subs(qw/protocol currency cvv2_response postcode_response
+    $self->build_subs(qw/protocol currency cvv2_response postcode_response error_code
        require_3d forward_to invoice_number authentication_key pareq cross_reference callback/);
-	$self->protocol('2.22');
+	$self->protocol('2.23');
 	$self->currency('GBP');
 	$self->require_3d(0);
 }
@@ -112,7 +129,7 @@ sub submit_3d {
           MD    => $content{'cross_reference'},
           PaRes => $content{'pares'},
         );
-	$self->set_server('test') if $self->test_transaction;
+	$self->set_server($ENV{'PROTX_F_SIMULATOR'} ? 'simulator' : 'test') if $self->test_transaction;
 	my ($page, $response, %headers) = 
 		post_https(
 				$self->server,
@@ -127,6 +144,12 @@ sub submit_3d {
 	}
 
   my $rf = $self->_parse_response($page);
+
+	if($ENV{'PROTX_DEBUG'}) {
+	  warn "3DSecure:";
+  	warn Dumper($rf);
+	}
+
 	$self->server_response($rf);
 	$self->result_code($rf->{'Status'});
 	$self->authentication_key($rf->{'SecurityKey'});
@@ -138,15 +161,69 @@ sub submit_3d {
     $rf->{'Status'} eq 'REGISTERED' 
     ? 1 : 0)) {
   		$self->error_message('Your card failed the password check.');
+  		return 0;
+	} else{
+	  return 1;
 	}
 }
 
-sub auth_action {
+sub cancel_action { #cancel authentication
+  my $self = shift;
+	croak "Need vendor ID"
+		unless defined $self->vendor;
+	$self->set_server($ENV{'PROTX_F_SIMULATOR'} ? 'simulator' : 'test') if $self->test_transaction;
+	my %content = $self->content();
+	my %field_mapping = (
+		VpsProtocol   => \($self->protocol),
+	  Vendor        => \($self->vendor),
+	  VendorTxCode  => 'invoice_number',
+	  VPSTxId       => 'authentication_id',
+	  SecurityKey   => 'authentication_key',
+	);
+  my %post_data = $self->do_remap(\%content,%field_mapping);
+  $post_data{'TxType'} = 'CANCEL';
+	
+	if($ENV{'PROTX_DEBUG'}) {
+	  warn Dumper(\%post_data);
+  }
+  
+	$self->path($servers{$self->{'_server'}}->{'cancel'});
+	my ($page, $response, %headers) = 
+		post_https(
+			$self->server,
+			$self->port,
+			$self->path,
+			undef,
+			make_form(
+				%post_data
+			)
+		);
+	unless ($page) {
+	  $self->error_message('There was a problem communicating with the payment server, please try later');
+    $self->is_success(0);
+		return;
+	}
+
+  my $rf = $self->_parse_response($page);
+
+	if($ENV{'PROTX_DEBUG'}) {
+	  warn "Cancellation:";
+  	warn Dumper($rf);
+	}
+	
+	$self->server_response($rf);
+	$self->result_code($rf->{'Status'});
+	unless($self->is_success($rf->{'Status'} eq 'OK'? 1 : 0)) {
+		$self->error_message($rf->{'StatusDetail'});
+	}  
+}
+
+sub auth_action { 
 	my $self = shift;
 	my $action = shift;
 	croak "Need vendor ID"
 		unless defined $self->vendor;
-	$self->set_server('test') if $self->test_transaction;
+	$self->set_server($ENV{'PROTX_F_SIMULATOR'} ? 'simulator' : 'test') if $self->test_transaction;
 	my %content = $self->content();
 	my %field_mapping = (
 		VpsProtocol => \($self->protocol),
@@ -161,17 +238,22 @@ sub auth_action {
 		RelatedSecurityKey => 'authentication_key',
 	);
   my %post_data = $self->do_remap(\%content,%field_mapping);
+  
+  if($ENV{'PROTX_DEBUG'}) {
+	  warn Dumper(\%post_data);
+  }
+	
 	$self->path($servers{$self->{'_server'}}->{lc $post_data{'TxType'}});
 	my ($page, $response, %headers) = 
 		post_https(
-				$self->server,
-				$self->port,
-				$self->path,
-				undef,
-				make_form(
-					%post_data
-				)
-			);
+			$self->server,
+			$self->port,
+			$self->path,
+			undef,
+			make_form(
+				%post_data
+			)
+		);
 	unless ($page) {
 	  $self->error_message('There was a problem communicating with the payment server, please try later');
     $self->is_success(0);
@@ -179,11 +261,17 @@ sub auth_action {
 	}
 
   my $rf = $self->_parse_response($page);
+
+	if($ENV{'PROTX_DEBUG'}) {
+	  warn "Authorization:";
+  	warn Dumper($rf);
+	}
+	
 	$self->server_response($rf);
 	$self->result_code($rf->{'Status'});
 	$self->authorization($rf->{'VPSTxId'});
 	unless($self->is_success($rf->{'Status'} eq 'OK'? 1 : 0)) {
-		$self->error_message('There was a problem taking your payment');
+		$self->error_message('There was a problem authorising your payment. Please try again.');
 	}
 
 }
@@ -192,7 +280,7 @@ sub submit {
 	my $self = shift;
 	croak "Need vendor ID"
 		unless defined $self->vendor;
-	$self->set_server('test') if $self->test_transaction;
+	$self->set_server($ENV{'PROTX_F_SIMULATOR'} ? 'simulator' : 'test') if $self->test_transaction;
 	my %content = $self->content();
 	$content{'expiration'} =~ s#/##g;
 	$content{'startdate'} =~ s#/##g if $content{'startdate'};
@@ -200,7 +288,7 @@ sub submit {
 	my $card_name = $content{'name_on_card'}||$content{'first_name'} . ' ' . $content{'last_name'};
 	my $customer_name = $content{'customer_name'}
 	|| $content{'first_name'} ? $content{'first_name'} . ' ' . $content{'last_name'} : undef;
-	
+	#$content{'first_name'} ||= $content{'last_name'};
 	my %field_mapping = (
 		VpsProtocol => \($self->protocol),
 	  Vendor      => \($self->vendor),
@@ -217,9 +305,21 @@ sub submit {
 		IssueNumber => 'issue_number',
 		CardType	=> \($card_type{lc $content{'type'}}),
 		ApplyAVSCV2 => 0,
-
-		BillingAddress  => 'address',
+		
+		BillingSurname  => 'last_name',
+		BillingFirstnames  => 'first_name',
+		BillingAddress1  => 'address',
 		BillingPostCode => 'zip',
+		BillingCity => 'city',
+		BillingCountry => 'country',
+		
+		DeliverySurname  => 'last_name',
+		DeliveryFirstnames  => 'first_name',
+		DeliveryAddress1  => 'address',
+		DeliveryPostCode => 'zip',
+		DeliveryCity => 'city',
+		DeliveryCountry => 'country',
+		
 		CustomerName    => \($customer_name),
 		ContactNumber   => 'telephone',
 		ContactFax		=> 'fax',
@@ -228,17 +328,20 @@ sub submit {
 	
 	my %post_data = $self->do_remap(\%content,%field_mapping);
 	
+	if($ENV{'PROTX_DEBUG'}) {
+	  warn Dumper(\%post_data);
+  }
+	
 	$self->path($servers{$self->{'_server'}}->{'authorise'}) if $post_data{'TxType'} eq 'AUTHORISE';
-	my ($page, $response, %headers) = 
-		post_https(
-				$self->server,
-				$self->port,
-				$self->path,
-				undef,
-				make_form(
-					%post_data
-				)
-			);
+	my ($page, $response, %headers) =	post_https(
+		$self->server,
+		$self->port,
+		$self->path,
+		undef,
+		make_form(
+			%post_data
+		)
+	);
 	unless ($page) {
 	  $self->error_message('There was a problem communicating with the payment server, please try later');
     $self->is_success(0);
@@ -259,18 +362,20 @@ sub submit {
 	}
 	$self->cvv2_response($rf->{'CV2Result'});
 	$self->postcode_response($rf->{'PostCodeResult'});
+	if($ENV{'PROTX_DEBUG'}) {
+  	warn Dumper($rf);
+	}
 	unless($self->is_success(
 	  $rf->{'Status'} eq '3DAUTH' ||
 	  $rf->{'Status'} eq 'OK' ||
 	  $rf->{'Status'} eq 'AUTHENTICATED' ||
 	  $rf->{'Status'} eq 'REGISTERED' 
 	  ? 1 : 0)) {
-      if($rf->{'StatusDetail'} =~ /5013/) {
-    		$self->error_message('Your card has expired');
-      } else {
-    		$self->error_message('There was a problem taking your payment');
-      }
-	}
+	    my $code = substr $rf->{'StatusDetail'}, 0 ,4;
+	    warn $code;
+	    $self->error_code($code);
+	    $self->error_message($status->{$code} || 'There was an unknown problem taking your payment. Please try again');
+    }
 }
 
 sub _parse_response {
