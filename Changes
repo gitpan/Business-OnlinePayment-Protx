@@ -17,3 +17,6 @@ Revision history for Perl extension Business::Protx.
       - Update to support ENV PROTX_DEBUG which will display responses from protx
       - Rename to SagePay
       - Added cancel action
+
+0.06  Fri Apr 17 2009
+      - Deprecated (see Business::OnlinePayment::SagePay)

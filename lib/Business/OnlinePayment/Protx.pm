@@ -7,26 +7,27 @@ use Net::SSLeay qw(make_form post_https);
 use base qw(Business::OnlinePayment);
 use Data::Dumper;
 
-our $VERSION = '0.05';
+our $VERSION = '0.06';
 
 # CARD TYPE MAP
 
 my %card_type = (
-	'american express' => 'AMEX',
-	'amex' => 'AMEX',
-	'visa' => 'VISA',
-	'visa electron' => 'UKE',
-	'visa debit' => 'VISA',
-	'mastercard' => 'MC',
-	'maestro' => 'MAESTRO',
-	'switch' => 'MAESTRO',
-	'switch solo' => 'SOLO',
-	'solo' => 'SOLO',
-	'diners club' => 'DINERS',
-	'jcb' => 'JCB',
+  'american express' => 'AMEX',
+  'amex' => 'AMEX',
+  'visa' => 'VISA',
+  'visa electron' => 'UKE',
+  'visa debit' => 'VISA',
+  'mastercard' => 'MC',
+  'maestro' => 'MAESTRO',
+  'switch' => 'MAESTRO',
+  'switch solo' => 'SOLO',
+  'solo' => 'SOLO',
+  'diners club' => 'DINERS',
+  'jcb' => 'JCB',
 );
 
 my $status = {
+  2000 => 'Your card was declined by the bank.',
   5013 => 'Your card has expired.',
   3078 => 'Your e-mail was invalid.',
   4023 => 'The card issue number is invalid.',
@@ -37,6 +38,8 @@ my $status = {
   5027 => 'Card start date is invalid',
   5028 => 'Card expiry date is invalid',
   3107 => 'Please ensure you have entered your full name, not just your surname',
+  3069 => 'Your card type is not supported by this vendor',
+  3057 => 'Your card security number was incorrect. This is normally the last 3 digits on the back of your card'
 };
 
 #ACTION MAP
@@ -48,72 +51,81 @@ my %action = (
 );
 
 my %servers = (
-	live => {
-		url => 'ukvps.protx.com',
-		path => '/vspgateway/service/vspdirect-register.vsp',
-		callback => '/vspgateway/service/direct3dcallback.vsp',
-		authorise => '/vspgateway/service/authorise.vsp',
-		refund => '/vspgateway/service/refund.vsp',
-		cancel => '/vspgateway/service/cancel.vsp',
-		port => 443,
-	},
-	test => {
-		url  => 'test.sagepay.com',
-		path => '/gateway/service/vspdirect-register.vsp',
-		callback => '/gateway/service/direct3dcallback.vsp',
-		authorise => '/gateway/service/authorise.vsp',
-		refund => '/gateway/service/refund.vsp',
-		cancel => '/gateway/service/cancel.vsp',
-		port => 443,
-	},
-	simulator => {
-		url => 'test.sagepay.com',
-		path => '/Simulator/VSPDirectGateway.asp',
-		callback => '/Simulator/VSPDirectCallback.asp',
-		authorise => '/Simulator/VSPServerGateway.asp?service=VendorAuthoriseTx ',
-		refund => '/Simulator/VSPServerGateway.asp?service=VendorRefundTx ',
-		cancel => '/Simulator/VSPServerGateway.asp?service=VendorCancelTx',
-		port => 443,
-	},
+  live => {
+    url => 'live.sagepay.com',
+    path => '/vspgateway/service/vspdirect-register.vsp',
+    callback => '/vspgateway/service/direct3dcallback.vsp',
+    authorise => '/vspgateway/service/authorise.vsp',
+    refund => '/vspgateway/service/refund.vsp',
+    cancel => '/vspgateway/service/cancel.vsp',
+    port => 443,
+  },
+  test => {
+    url  => 'test.sagepay.com',
+    path => '/gateway/service/vspdirect-register.vsp',
+    callback => '/gateway/service/direct3dcallback.vsp',
+    authorise => '/gateway/service/authorise.vsp',
+    refund => '/gateway/service/refund.vsp',
+    cancel => '/gateway/service/cancel.vsp',
+    port => 443,
+  },
+  simulator => {
+    url => 'test.sagepay.com',
+    path => '/Simulator/VSPDirectGateway.asp',
+    callback => '/Simulator/VSPDirectCallback.asp',
+    authorise => '/Simulator/VSPServerGateway.asp?service=VendorAuthoriseTx ',
+    refund => '/Simulator/VSPServerGateway.asp?service=VendorRefundTx ',
+    cancel => '/Simulator/VSPServerGateway.asp?service=VendorCancelTx',
+    port => 443,
+  },
+  timeout => {
+    url => 'localhost',
+    path => '/timeout',
+    callback => '/Simulator/VSPDirectCallback.asp',
+    authorise => '/Simulator/VSPServerGateway.asp?service=VendorAuthoriseTx ',
+    refund => '/Simulator/VSPServerGateway.asp?service=VendorRefundTx ',
+    cancel => '/Simulator/VSPServerGateway.asp?service=VendorCancelTx',
+    port => 3000,
+  }
 );
 
 sub callback {
-	my ($self, $value) = @_;
-	$self->{'callback'} = $value if $value;
-	return $self->{'callback'};
+  my ($self, $value) = @_;
+  $self->{'callback'} = $value if $value;
+  return $self->{'callback'};
 }
 
 sub set_server {
-    my ($self, $type) = @_;
-    $self->{'_server'} = $type;
-    $self->server($servers{$type}->{'url'});
-    $self->path($servers{$type}->{'path'});
-    $self->callback($servers{$type}->{'callback'});
-    $self->port($servers{$type}->{'port'});
+  my ($self, $type) = @_;
+  $self->{'_server'} = $type;
+  $self->server($servers{$type}->{'url'});
+  $self->path($servers{$type}->{'path'});
+  $self->callback($servers{$type}->{'callback'});
+  $self->port($servers{$type}->{'port'});
 }
 
 sub set_defaults {
-    my $self = shift;
-	$self->set_server('live');
+  my $self = shift;
+  $self->set_server('live');
 
-    $self->build_subs(qw/protocol currency cvv2_response postcode_response error_code
-       require_3d forward_to invoice_number authentication_key pareq cross_reference callback/);
-	$self->protocol('2.23');
-	$self->currency('GBP');
-	$self->require_3d(0);
+  $self->build_subs(qw/protocol currency cvv2_response postcode_response error_code
+     require_3d forward_to invoice_number authentication_key pareq cross_reference callback/);
+  $self->protocol('2.23');
+  $self->currency('GBP');
+  $self->require_3d(0);
 }
 
 sub do_remap {
-	my ($self, $content, %map) = @_;
-	my %remapped = ();
-	while (my ($k, $v) = each %map) {
-		no strict 'refs';
-		$remapped{$k} = ref( $map{$k} ) ? 
-			${ $map{$k} }
-			:
-			$content->{$v};
-	}
-	return %remapped;
+  my ($self, $content, %map) = @_;
+  my %remapped = ();
+  while (my ($k, $v) = each %map) {
+    no strict 'refs';
+    $remapped{$k} = ref( $map{$k} ) ? 
+      ${ $map{$k} }
+      :
+      $content->{$v};
+  }
+  return %remapped;
 }
 
 sub format_amount {
@@ -129,252 +141,323 @@ sub submit_3d {
           MD    => $content{'cross_reference'},
           PaRes => $content{'pares'},
         );
-	$self->set_server($ENV{'PROTX_F_SIMULATOR'} ? 'simulator' : 'test') if $self->test_transaction;
-	my ($page, $response, %headers) = 
-		post_https(
-				$self->server,
-				$self->port,
-				$self->callback,
-				undef,
-				make_form(%post_data)
-			);
-	unless ($page) {
-	  $self->error_message('There was a problem communicating with the payment server, please try later');
-		return;
-	}
+  $self->set_server($ENV{'PROTX_F_SIMULATOR'} ? 'simulator' : 'test') if $self->test_transaction;
+  my ($page, $response, %headers) = 
+    post_https(
+      $self->server,
+      $self->port,
+      $self->callback,
+      undef,
+      make_form(%post_data)
+    );
+  unless ($page) {
+    $self->error_message('There was a problem communicating with the payment server, please try later');
+    return;
+  }
 
   my $rf = $self->_parse_response($page);
 
-	if($ENV{'PROTX_DEBUG'}) {
-	  warn "3DSecure:";
-  	warn Dumper($rf);
-	}
+  if($ENV{'PROTX_DEBUG'}) {
+    warn "3DSecure:";
+    warn Dumper($rf);
+  }
 
-	$self->server_response($rf);
-	$self->result_code($rf->{'Status'});
-	$self->authentication_key($rf->{'SecurityKey'});
-	$self->authorization($rf->{'VPSTxId'});
-	
-	unless(
-	  $self->is_success($rf->{'Status'} eq 'OK' ||
-  	$rf->{'Status'} eq 'AUTHENTICATED' ||
-    $rf->{'Status'} eq 'REGISTERED' 
-    ? 1 : 0)) {
-  		$self->error_message('Your card failed the password check.');
-  		return 0;
-	} else{
-	  return 1;
-	}
+  $self->server_response($rf);
+  $self->result_code($rf->{'Status'});
+  $self->authentication_key($rf->{'SecurityKey'});
+  $self->authorization($rf->{'VPSTxId'});
+
+  unless(
+    $self->is_success($rf->{'Status'} eq 'OK'
+    || $rf->{'Status'} eq 'AUTHENTICATED' 
+    ?  1 : 0)) {
+    $self->error_message('Your card failed the password check.');
+    return 0;
+  } else{
+    return 1;
+  }
 }
+
+
+sub void_action { #void authorization
+  my $self = shift;
+  croak "Need vendor ID"
+    unless defined $self->vendor;
+  $self->set_server($ENV{'PROTX_F_SIMULATOR'} ? 'simulator' : 'test') if $self->test_transaction;
+  my %content = $self->content();
+  my %field_mapping = (
+    VpsProtocol   => \($self->protocol),
+    Vendor        => \($self->vendor),
+    VendorTxCode  => 'invoice_number',
+    VPSTxId       => 'authentication_id',
+    SecurityKey   => 'authentication_key',
+    TxAuthNo      => ''
+  );
+  my %post_data = $self->do_remap(\%content,%field_mapping);
+  $post_data{'TxType'} = 'VOID';
+
+  if($ENV{'PROTX_DEBUG'}) {
+    warn Dumper(\%post_data);
+  }
+
+  $self->path($servers{$self->{'_server'}}->{'cancel'});
+  my ($page, $response, %headers) = 
+    post_https(
+      $self->server,
+      $self->port,
+      $self->path,
+      undef,
+      make_form(
+        %post_data
+      )
+    );
+  unless ($page) {
+    $self->error_message('There was a problem communicating with the payment server, please try later');
+    $self->is_success(0);
+    return;
+  }
+
+  my $rf = $self->_parse_response($page);
+
+  if($ENV{'PROTX_DEBUG'}) {
+    warn "Cancellation:";
+    warn Dumper($rf);
+  }
+
+  $self->server_response($rf);
+  $self->result_code($rf->{'Status'});
+  unless($self->is_success($rf->{'Status'} eq 'OK'? 1 : 0)) {
+    if($ENV{'PROTX_DEBUG_ERROR_ONLY'}) {
+      warn Dumper($rf);
+    }
+    $self->error_message($rf->{'StatusDetail'});
+  }  
+  }
 
 sub cancel_action { #cancel authentication
   my $self = shift;
-	croak "Need vendor ID"
-		unless defined $self->vendor;
-	$self->set_server($ENV{'PROTX_F_SIMULATOR'} ? 'simulator' : 'test') if $self->test_transaction;
-	my %content = $self->content();
-	my %field_mapping = (
-		VpsProtocol   => \($self->protocol),
-	  Vendor        => \($self->vendor),
-	  VendorTxCode  => 'invoice_number',
-	  VPSTxId       => 'authentication_id',
-	  SecurityKey   => 'authentication_key',
-	);
+  croak "Need vendor ID"
+    unless defined $self->vendor;
+  $self->set_server($ENV{'PROTX_F_SIMULATOR'} ? 'simulator' : 'test') if $self->test_transaction;
+  my %content = $self->content();
+  my %field_mapping = (
+  	VpsProtocol   => \($self->protocol),
+    Vendor        => \($self->vendor),
+    VendorTxCode  => 'parent_invoice_number',
+    TxAuthNo      => 'invoice_number',
+    VPSTxId       => 'authentication_id',
+    SecurityKey   => 'authentication_key',
+  );
   my %post_data = $self->do_remap(\%content,%field_mapping);
   $post_data{'TxType'} = 'CANCEL';
-	
-	if($ENV{'PROTX_DEBUG'}) {
-	  warn Dumper(\%post_data);
+
+  if($ENV{'PROTX_DEBUG'}) {
+    warn Dumper(\%post_data);
   }
-  
-	$self->path($servers{$self->{'_server'}}->{'cancel'});
-	my ($page, $response, %headers) = 
-		post_https(
-			$self->server,
-			$self->port,
-			$self->path,
-			undef,
-			make_form(
-				%post_data
-			)
-		);
-	unless ($page) {
-	  $self->error_message('There was a problem communicating with the payment server, please try later');
+
+  $self->path($servers{$self->{'_server'}}->{'cancel'});
+  my ($page, $response, %headers) = 
+    post_https(
+      $self->server,
+      $self->port,
+      $self->path,
+      undef,
+      make_form(
+        %post_data
+      )
+    );
+  unless ($page) {
+    $self->error_message('There was a problem communicating with the payment server, please try later');
     $self->is_success(0);
-		return;
-	}
+  	return;
+  }
 
   my $rf = $self->_parse_response($page);
 
-	if($ENV{'PROTX_DEBUG'}) {
-	  warn "Cancellation:";
-  	warn Dumper($rf);
-	}
-	
-	$self->server_response($rf);
-	$self->result_code($rf->{'Status'});
-	unless($self->is_success($rf->{'Status'} eq 'OK'? 1 : 0)) {
-		$self->error_message($rf->{'StatusDetail'});
-	}  
+  if($ENV{'PROTX_DEBUG'}) {
+    warn "Cancellation:";
+    warn Dumper($rf);
+  }
+
+  $self->server_response($rf);
+  $self->result_code($rf->{'Status'});
+  unless($self->is_success($rf->{'Status'} eq 'OK'? 1 : 0)) {
+    if($ENV{'PROTX_DEBUG_ERROR_ONLY'}) {
+      warn Dumper($rf);
+    }
+    $self->error_message($rf->{'StatusDetail'});
+  }  
 }
 
 sub auth_action { 
-	my $self = shift;
-	my $action = shift;
-	croak "Need vendor ID"
-		unless defined $self->vendor;
-	$self->set_server($ENV{'PROTX_F_SIMULATOR'} ? 'simulator' : 'test') if $self->test_transaction;
-	my %content = $self->content();
-	my %field_mapping = (
-		VpsProtocol => \($self->protocol),
-	  Vendor      => \($self->vendor),
-	  TxType      => \($action{lc $content{'action'}}),
-	  VendorTxCode=> 'invoice_number',
-	  Description => 'description',
-		Currency	=> \($self->currency),
-	  Amount      => \(format_amount($content{'amount'})),
-		RelatedVPSTxId => 'parent_auth',
-		RelatedVendorTxCode => 'parent_invoice_number',
-		RelatedSecurityKey => 'authentication_key',
-	);
-  my %post_data = $self->do_remap(\%content,%field_mapping);
+  my $self = shift;
+  my $action = shift;
+  croak "Need vendor ID"
+    unless defined $self->vendor;
+  $self->set_server($ENV{'PROTX_F_SIMULATOR'} ? 'simulator' : 'test') if $self->test_transaction;
   
+  my %content = $self->content();
+  my %field_mapping = (
+    VpsProtocol => \($self->protocol),
+    Vendor      => \($self->vendor),
+    TxType      => \($action{lc $content{'action'}}),
+    VendorTxCode=> 'invoice_number',
+    Description => 'description',
+    Currency	=> \($self->currency),
+    Amount      => \(format_amount($content{'amount'})),
+    RelatedVPSTxId => 'parent_auth',
+    RelatedVendorTxCode => 'parent_invoice_number',
+    RelatedSecurityKey => 'authentication_key',
+  );
+  my %post_data = $self->do_remap(\%content,%field_mapping);
+
   if($ENV{'PROTX_DEBUG'}) {
-	  warn Dumper(\%post_data);
+    warn Dumper(\%post_data);
   }
-	
-	$self->path($servers{$self->{'_server'}}->{lc $post_data{'TxType'}});
-	my ($page, $response, %headers) = 
-		post_https(
-			$self->server,
-			$self->port,
-			$self->path,
-			undef,
-			make_form(
-				%post_data
-			)
-		);
-	unless ($page) {
-	  $self->error_message('There was a problem communicating with the payment server, please try later');
+
+  $self->path($servers{$self->{'_server'}}->{lc $post_data{'TxType'}});
+  my ($page, $response, %headers) = 
+    post_https(
+      $self->server,
+      $self->port,
+      $self->path,
+      undef,
+      make_form(
+        %post_data
+      )
+    );
+  unless ($page) {
+    $self->error_message('There was a problem communicating with the payment server, please try later');
     $self->is_success(0);
-		return;
-	}
+    return;
+  }
 
   my $rf = $self->_parse_response($page);
 
-	if($ENV{'PROTX_DEBUG'}) {
-	  warn "Authorization:";
-  	warn Dumper($rf);
-	}
-	
-	$self->server_response($rf);
-	$self->result_code($rf->{'Status'});
-	$self->authorization($rf->{'VPSTxId'});
-	unless($self->is_success($rf->{'Status'} eq 'OK'? 1 : 0)) {
-		$self->error_message('There was a problem authorising your payment. Please try again.');
-	}
+  if($ENV{'PROTX_DEBUG'}) {
+    warn "Authorization:";
+    warn Dumper($rf);
+  }
+
+  $self->server_response($rf);
+  $self->result_code($rf->{'Status'});
+  $self->authorization($rf->{'VPSTxId'});
+  unless($self->is_success($rf->{'Status'} eq 'OK'? 1 : 0)) {
+    my $code = substr $rf->{'StatusDetail'}, 0 ,4;
+    $self->error_code($code);
+
+    if($ENV{'PROTX_DEBUG_ERROR_ONLY'}) {
+      warn Dumper($rf);
+    }
+    $self->error_message('There was a problem authorising your payment. Please check your card details and try again.');
+  }
 
 }
 
 sub submit {
-	my $self = shift;
-	croak "Need vendor ID"
-		unless defined $self->vendor;
-	$self->set_server($ENV{'PROTX_F_SIMULATOR'} ? 'simulator' : 'test') if $self->test_transaction;
-	my %content = $self->content();
-	$content{'expiration'} =~ s#/##g;
-	$content{'startdate'} =~ s#/##g if $content{'startdate'};
+  my $self = shift;
+  croak "Need vendor ID"
+    unless defined $self->vendor;
+  $self->set_server($ENV{'PROTX_F_SIMULATOR'} ? 'simulator' : 'test') if $self->test_transaction;
+  
+  my %content = $self->content();
+  $content{'expiration'} =~ s#/##g;
+  $content{'startdate'} =~ s#/##g if $content{'startdate'};
 
-	my $card_name = $content{'name_on_card'}||$content{'first_name'} . ' ' . $content{'last_name'};
-	my $customer_name = $content{'customer_name'}
-	|| $content{'first_name'} ? $content{'first_name'} . ' ' . $content{'last_name'} : undef;
-	#$content{'first_name'} ||= $content{'last_name'};
-	my %field_mapping = (
-		VpsProtocol => \($self->protocol),
-	  Vendor      => \($self->vendor),
-	  TxType      => \($action{lc $content{'action'}}),
-	  VendorTxCode=> 'invoice_number',
-	  Description => 'description',
-		Currency	=> \($self->currency),
+  my $card_name = $content{'name_on_card'}||$content{'first_name'} . ' ' . $content{'last_name'};
+  my $customer_name = $content{'customer_name'}
+  || $content{'first_name'} ? $content{'first_name'} . ' ' . $content{'last_name'} : undef;
+  $content{'last_name'} ||= $content{'first_name'}; # new protocol requires first and last name - do some people even have both!?
+  my %field_mapping = (
+    VpsProtocol => \($self->protocol),
+    Vendor      => \($self->vendor),
+    TxType      => \($action{lc $content{'action'}}),
+    VendorTxCode=> 'invoice_number',
+    Description => 'description',
+    Currency    => \($self->currency),
     CardHolder  => \($card_name),
-	  CardNumber  => 'card_number',
-	  CV2         => 'cvv2',
-		ExpiryDate	=> 'expiration',
-		StartDate	=> 'startdate',
-	  Amount      => \(format_amount($content{'amount'})),
-		IssueNumber => 'issue_number',
-		CardType	=> \($card_type{lc $content{'type'}}),
-		ApplyAVSCV2 => 0,
-		
-		BillingSurname  => 'last_name',
-		BillingFirstnames  => 'first_name',
-		BillingAddress1  => 'address',
-		BillingPostCode => 'zip',
-		BillingCity => 'city',
-		BillingCountry => 'country',
-		
-		DeliverySurname  => 'last_name',
-		DeliveryFirstnames  => 'first_name',
-		DeliveryAddress1  => 'address',
-		DeliveryPostCode => 'zip',
-		DeliveryCity => 'city',
-		DeliveryCountry => 'country',
-		
-		CustomerName    => \($customer_name),
-		ContactNumber   => 'telephone',
-		ContactFax		=> 'fax',
-		CustomerEmail	=> 'email',
-	);
-	
-	my %post_data = $self->do_remap(\%content,%field_mapping);
-	
-	if($ENV{'PROTX_DEBUG'}) {
-	  warn Dumper(\%post_data);
+    CardNumber  => 'card_number',
+    CV2         => 'cvv2',
+    ExpiryDate	=> 'expiration',
+    StartDate	=> 'startdate',
+    Amount      => \(format_amount($content{'amount'})),
+    IssueNumber => 'issue_number',
+    CardType	=> \($card_type{lc $content{'type'}}),
+    ApplyAVSCV2 => 0,
+
+    BillingSurname  => 'last_name',
+    BillingFirstnames  => 'first_name',
+    BillingAddress1  => 'address',
+    BillingPostCode => 'zip',
+    BillingCity => 'city',
+    BillingState => 'state',
+    BillingCountry => 'country',
+
+    DeliverySurname  => 'last_name',
+    DeliveryFirstnames  => 'first_name',
+    DeliveryAddress1  => 'address',
+    DeliveryPostCode => 'zip',
+    DeliveryCity => 'city',
+    DeliveryCountry => 'country',
+    DeliveryState => 'state',
+
+    CustomerName    => \($customer_name),
+    ContactNumber   => 'telephone',
+    ContactFax		=> 'fax',
+    CustomerEmail	=> 'email',
+  );
+
+  my %post_data = $self->do_remap(\%content,%field_mapping);
+
+  if($ENV{'PROTX_DEBUG'}) {
+    warn Dumper({%post_data, CV2 => "XXX", CardNumber => "XXXX XXXX XXXX XXXX"});
   }
-	
-	$self->path($servers{$self->{'_server'}}->{'authorise'}) if $post_data{'TxType'} eq 'AUTHORISE';
-	my ($page, $response, %headers) =	post_https(
-		$self->server,
-		$self->port,
-		$self->path,
-		undef,
-		make_form(
-			%post_data
-		)
-	);
-	unless ($page) {
-	  $self->error_message('There was a problem communicating with the payment server, please try later');
+
+  $self->path($servers{$self->{'_server'}}->{'authorise'}) if $post_data{'TxType'} eq 'AUTHORISE';
+  my ($page, $response, %headers) =	post_https(
+    $self->server,
+    $self->port,
+    $self->path,
+    undef,
+    make_form(
+      %post_data
+    )
+  );
+  unless ($page) {
+    $self->error_message('There was a problem communicating with the payment server, please try later');
     $self->is_success(0);
-		return;
-	}
+    return;
+  }
 
   my $rf = $self->_parse_response($page);
-	$self->server_response($rf);
-	$self->result_code($rf->{'Status'});
-	$self->authorization($rf->{'VPSTxId'});
-	$self->authentication_key($rf->{'SecurityKey'});
-	
-	if($self->result_code eq '3DAUTH' && $rf->{'3DSecureStatus'} eq 'OK') {
-		$self->require_3d(1);
-		$self->forward_to($rf->{'ACSURL'});
-		$self->pareq($rf->{'PAReq'});
-		$self->cross_reference($rf->{'MD'});
-	}
-	$self->cvv2_response($rf->{'CV2Result'});
-	$self->postcode_response($rf->{'PostCodeResult'});
-	if($ENV{'PROTX_DEBUG'}) {
-  	warn Dumper($rf);
-	}
-	unless($self->is_success(
-	  $rf->{'Status'} eq '3DAUTH' ||
-	  $rf->{'Status'} eq 'OK' ||
-	  $rf->{'Status'} eq 'AUTHENTICATED' ||
-	  $rf->{'Status'} eq 'REGISTERED' 
-	  ? 1 : 0)) {
-	    my $code = substr $rf->{'StatusDetail'}, 0 ,4;
-	    warn $code;
-	    $self->error_code($code);
-	    $self->error_message($status->{$code} || 'There was an unknown problem taking your payment. Please try again');
+  $self->server_response($rf);
+  $self->result_code($rf->{'Status'});
+  $self->authorization($rf->{'VPSTxId'});
+  $self->authentication_key($rf->{'SecurityKey'});
+
+  if($self->result_code eq '3DAUTH' && $rf->{'3DSecureStatus'} eq 'OK') {
+    $self->require_3d(1);
+    $self->forward_to($rf->{'ACSURL'});
+    $self->pareq($rf->{'PAReq'});
+    $self->cross_reference($rf->{'MD'});
+  }
+  $self->cvv2_response($rf->{'CV2Result'});
+  $self->postcode_response($rf->{'PostCodeResult'});
+  if($ENV{'PROTX_DEBUG'}) {
+    warn Dumper($rf);
+  }
+  unless($self->is_success(
+    $rf->{'Status'} eq '3DAUTH' ||
+    $rf->{'Status'} eq 'OK' ||
+    $rf->{'Status'} eq 'AUTHENTICATED' ||
+    $rf->{'Status'} eq 'REGISTERED' 
+    ? 1 : 0)) {
+      my $code = substr $rf->{'StatusDetail'}, 0 ,4;
+      if($ENV{'PROTX_DEBUG_ERROR_ONLY'}) {
+        warn Dumper($rf);
+      }
+      $self->error_code($code);
+      $self->error_message($status->{$code} || 'There was an unknown problem taking your payment. Please try again');
     }
 }
 
@@ -388,6 +471,10 @@ sub _parse_response {
 =head1 NAME
 
 Business::OnlinePayment::Protx - Protx backend for Business::OnlinePayment
+
+=head1 VERSION
+
+version 0.06
 
 =head1 SYNOPSIS
 

@@ -1,26 +1,12 @@
-Business-OnlinePayment-Protx
-============================
 
-This perl module provides integration with the Protx VSP payments system
 
-INSTALLATION
+This archive contains the distribution Business-OnlinePayment-Protx, version
+0.06:
 
-To install this module type the following:
+  Deprecated - See Business-OnlinePayment-SagePay
 
-   perl Makefile.PL
-   make
-   make test
-   make install
+This software is copyright (c) 2009 by Simon Elliott.
 
-SUPPORT AND DOCUMENTATION
+This is free software; you can redistribute it and/or modify it under
+the same terms as the Perl 5 programming language system itself.
 
-After installing, you can find documentation for this module with the
-perldoc command.
-
-    perldoc Business::OnlinePayment::Protx
-
-COPYRIGHT AND LICENCE
-
-Copyright (C) 2008 by Airspace Software Ltd: www.airspace.co.uk
-
-This library is free software under the same license as perl itself.

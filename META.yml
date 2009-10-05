@@ -1,23 +1,16 @@
 ---
-abstract: 'Protx backend for Business::OnlinePayment'
+abstract: 'Deprecated - See Business-OnlinePayment-SagePay'
 author:
-  - 'purge: Simon Elliott <cpan@browsing.co.uk>'
-distribution_type: module
-generated_by: 'Module::Install version 0.80'
+  - 'Simon Elliott <cpan@browsing.co.uk>'
+generated_by: 'Dist::Zilla version 1.092680'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
   version: 1.4
 name: Business-OnlinePayment-Protx
-no_index:
-  directory:
-    - inc
-    - t
 requires:
   Business::OnlinePayment: 2.01
   Data::Dumper: 0
   Net::SSLeay: 1.35
   Test::More: 0
-resources:
-  license: http://dev.perl.org/licenses/
-version: 0.05
+version: 0.06

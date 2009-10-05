@@ -1,13 +1,23 @@
-use inc::Module::Install;
 
-name     'Business-OnlinePayment-Protx';
-all_from 'lib/Business/OnlinePayment/Protx.pm';
+use strict;
+use warnings;
 
-requires 'Test::More'              => 0;
-requires 'Data::Dumper'            => 0;
-requires 'Business::OnlinePayment' => 2.01;
-requires 'Net::SSLeay'             => 1.35;
+use ExtUtils::MakeMaker;
 
-auto_install;
+WriteMakefile(
+  DISTNAME  => 'Business-OnlinePayment-Protx',
+  NAME      => 'Business::OnlinePayment::Protx',
+  AUTHOR    => 'Simon\ Elliott\ \<cpan\@browsing\.co\.uk\>',
+  ABSTRACT  => 'Deprecated\ \-\ See\ Business\-OnlinePayment\-SagePay',
+  VERSION   => '0.06',
+  EXE_FILES => [ qw() ],
+  (eval { ExtUtils::MakeMaker->VERSION(6.31) } ? (LICENSE => 'perl') : ()),
+  PREREQ_PM    => {
+    "Test::More" => '0',
+    "Net::SSLeay" => '1.35',
+    "Data::Dumper" => '0',
+    "Business::OnlinePayment" => '2.01',
+  },
+  test => {TESTS => 't/*.t'}
+);
 
-WriteAll;
