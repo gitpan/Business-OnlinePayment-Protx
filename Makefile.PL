@@ -8,7 +8,7 @@ WriteMakefile(
   DISTNAME  => 'Business-OnlinePayment-Protx',
   NAME      => 'Business::OnlinePayment::Protx',
   AUTHOR    => 'Simon\ Elliott\ \<cpan\@browsing\.co\.uk\>',
-  ABSTRACT  => 'Deprecated\ \-\ See\ Business\-OnlinePayment\-SagePay',
+  ABSTRACT  => 'DEPRECATED\ \-\ See\ Business\-OnlinePayment\-SagePay',
   VERSION   => '0.06',
   EXE_FILES => [ qw() ],
   (eval { ExtUtils::MakeMaker->VERSION(6.31) } ? (LICENSE => 'perl') : ()),

@@ -1,16 +1,25 @@
----
-abstract: 'Deprecated - See Business-OnlinePayment-SagePay'
+--- #YAML:1.0
+name:               Business-OnlinePayment-Protx
+version:            0.06
+abstract:           DEPRECATED\ \-\ See\ Business\-OnlinePayment\-SagePay
 author:
-  - 'Simon Elliott <cpan@browsing.co.uk>'
-generated_by: 'Dist::Zilla version 1.092680'
-license: perl
-meta-spec:
-  url: http://module-build.sourceforge.net/META-spec-v1.4.html
-  version: 1.4
-name: Business-OnlinePayment-Protx
+    - Simon\ Elliott\ \<cpan\@browsing\.co\.uk\>
+license:            perl
+distribution_type:  module
+configure_requires:
+    ExtUtils::MakeMaker:  0
+build_requires:
+    ExtUtils::MakeMaker:  0
 requires:
-  Business::OnlinePayment: 2.01
-  Data::Dumper: 0
-  Net::SSLeay: 1.35
-  Test::More: 0
-version: 0.06
+    Business::OnlinePayment:  2.01
+    Data::Dumper:         0
+    Net::SSLeay:          1.35
+    Test::More:           0
+no_index:
+    directory:
+        - t
+        - inc
+generated_by:       ExtUtils::MakeMaker version 6.54
+meta-spec:
+    url:      http://module-build.sourceforge.net/META-spec-v1.4.html
+    version:  1.4
